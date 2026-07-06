@@ -1,0 +1,206 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChatStash</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main id="auth-view" class="auth-view hidden">
+      <section class="auth-panel">
+        <h1>ChatStash</h1>
+        <p id="auth-copy">Sign in to your local archive.</p>
+        <form id="auth-form">
+          <label>
+            Username
+            <input id="auth-username" autocomplete="username" value="admin" />
+          </label>
+          <label>
+            Password
+            <input id="auth-password" type="password" autocomplete="current-password" />
+          </label>
+          <button type="submit" class="primary">Continue</button>
+          <p id="auth-error" class="error"></p>
+        </form>
+      </section>
+    </main>
+
+    <main id="app-view" class="app-view hidden">
+      <header class="topbar">
+        <div class="brand">ChatStash</div>
+        <form id="search-form" class="searchbar">
+          <input id="q" placeholder='Search: "exact phrase" AND project -draft' />
+          <button type="submit" title="Search">Search</button>
+        </form>
+        <button id="scan-btn" title="Scan library paths">Scan</button>
+        <button id="settings-toggle" title="Settings">Settings</button>
+      </header>
+
+      <section class="workspace">
+        <aside class="filters">
+          <div class="filter-row">
+            <label>Sort</label>
+            <select id="sort">
+              <option value="updated_desc">Updated newest</option>
+              <option value="updated_asc">Updated oldest</option>
+              <option value="created_desc">Created newest</option>
+              <option value="created_asc">Created oldest</option>
+              <option value="title_asc">Title A-Z</option>
+              <option value="title_desc">Title Z-A</option>
+              <option value="rating_desc">Rating</option>
+              <option value="messages_desc">Messages</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Model</label>
+            <input id="model" placeholder="gpt-4o" />
+          </div>
+          <div class="filter-row">
+            <label>Mode</label>
+            <select id="mode">
+              <option value="">Any</option>
+              <option value="chat">Chat</option>
+              <option value="research">Research</option>
+              <option value="agent">Agent</option>
+              <option value="study">Study</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Project</label>
+            <input id="project" placeholder="project name" />
+          </div>
+          <div class="filter-row">
+            <label>Tag</label>
+            <input id="tag" placeholder="tag" />
+          </div>
+          <div class="split">
+            <label><input id="has_code" type="checkbox" /> Code</label>
+            <label><input id="has_attachments" type="checkbox" /> Files</label>
+          </div>
+          <div class="split">
+            <label><input id="starred" type="checkbox" /> Starred</label>
+            <label><input id="archived" type="checkbox" /> Archived</label>
+          </div>
+          <div class="filter-row">
+            <label>Minimum rating</label>
+            <input id="rating" type="number" min="0" max="5" value="0" />
+          </div>
+          <div class="filter-row">
+            <label>Created from</label>
+            <input id="date_from" type="date" />
+          </div>
+          <div class="filter-row">
+            <label>Created to</label>
+            <input id="date_to" type="date" />
+          </div>
+          <button id="clear-filters" class="wide">Clear Filters</button>
+
+          <section class="summary">
+            <h2>Library</h2>
+            <dl id="stats"></dl>
+          </section>
+
+          <section class="summary">
+            <h2>Jobs</h2>
+            <div id="jobs" class="jobs"></div>
+          </section>
+        </aside>
+
+        <section class="results">
+          <div class="toolbar">
+            <label class="select-all"><input id="select-page" type="checkbox" /> Select page</label>
+            <span id="result-count">0 conversations</span>
+            <span id="selection-count">0 selected</span>
+            <button id="prev-page">Prev</button>
+            <button id="next-page">Next</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Title</th>
+                  <th>Updated</th>
+                  <th>Model</th>
+                  <th>Mode</th>
+                  <th>Project</th>
+                  <th>Tags</th>
+                  <th>Rating</th>
+                  <th>Stats</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="detail">
+          <div id="empty-detail" class="empty">Select a conversation.</div>
+          <article id="detail-content" class="hidden"></article>
+        </aside>
+      </section>
+
+      <section class="bulkbar">
+        <div>
+          <strong id="bulk-count">0</strong>
+          <span>selected</span>
+        </div>
+        <input id="bulk-tags" placeholder="tags: design, keep, client-a" />
+        <button id="add-tags">Add Tags</button>
+        <button id="set-tags">Set Tags</button>
+        <input id="bulk-project" placeholder="project" />
+        <button id="set-project">Set Project</button>
+        <select id="bulk-rating">
+          <option value="0">0 stars</option>
+          <option value="1">1 star</option>
+          <option value="2">2 stars</option>
+          <option value="3">3 stars</option>
+          <option value="4">4 stars</option>
+          <option value="5">5 stars</option>
+        </select>
+        <button id="set-rating">Rate</button>
+        <input id="title-pattern" placeholder="{date} - {project} - {title}" />
+        <button id="rename-title">Rename</button>
+        <select id="export-format">
+          <option value="bundle">Bundle zip</option>
+          <option value="markdown">Consolidated MD</option>
+          <option value="zip_json">JSON zip</option>
+          <option value="zip_markdown">Markdown zip</option>
+          <option value="metadata_csv">Metadata CSV</option>
+        </select>
+        <button id="export-btn" class="primary">Export</button>
+      </section>
+
+      <dialog id="settings">
+        <form method="dialog" class="settings-panel">
+          <header>
+            <h2>Settings</h2>
+            <button value="close">Close</button>
+          </header>
+          <label>
+            Library paths
+            <textarea id="library-paths" rows="5"></textarea>
+          </label>
+          <div class="split">
+            <label><input id="watch-enabled" type="checkbox" /> Watch enabled</label>
+            <label>
+              Watch interval
+              <input id="watch-interval" type="number" min="15" step="15" />
+            </label>
+          </div>
+          <label>
+            Managed library path
+            <input id="managed-library-path" />
+          </label>
+          <label><input id="copy-imports" type="checkbox" /> Copy imports into managed library</label>
+          <footer>
+            <button id="save-settings" class="primary" value="close">Save</button>
+          </footer>
+        </form>
+      </dialog>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
