@@ -138,6 +138,9 @@ def init_db() -> None:
               mode TEXT,
               source TEXT DEFAULT 'ChatGPT',
               source_type TEXT,
+              source_project_id TEXT,
+              source_project_scope TEXT,
+              source_project_label TEXT,
               original_path TEXT,
               original_inner_path TEXT,
               import_id TEXT,
@@ -173,6 +176,10 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_conversations_import ON conversations(import_id);
             """
         )
+        ensure_column(conn, "conversations", "source_project_id", "TEXT")
+        ensure_column(conn, "conversations", "source_project_scope", "TEXT")
+        ensure_column(conn, "conversations", "source_project_label", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_source_project ON conversations(source_project_id)")
         existing_fts = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversations_fts'"
         ).fetchone()
@@ -198,6 +205,69 @@ def init_db() -> None:
             )
             """
         )
+        refresh_source_project_labels(conn)
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def source_project_from_raw(raw_json: str) -> tuple[str | None, str | None]:
+    try:
+        conv = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return None, None
+    memory_scope = str(conv.get("memory_scope") or "")
+    template_id = conv.get("conversation_template_id")
+    if template_id and "project" in memory_scope:
+        return str(template_id), memory_scope
+    return None, None
+
+
+def refresh_source_project_labels(conn: sqlite3.Connection | None = None) -> int:
+    aliases = project_aliases()
+    close_conn = False
+    if conn is None:
+        conn = db()
+        close_conn = True
+    updated = 0
+    try:
+        rows = conn.execute("SELECT rowid, raw_json, source_project_id, source_project_scope, source_project_label FROM conversations").fetchall()
+        for row in rows:
+            source_project_id, source_project_scope = source_project_from_raw(row["raw_json"])
+            source_project_label = project_label(source_project_id, aliases)
+            if (
+                row["source_project_id"] == source_project_id
+                and row["source_project_scope"] == source_project_scope
+                and row["source_project_label"] == source_project_label
+            ):
+                continue
+            conn.execute(
+                "UPDATE conversations SET source_project_id=?, source_project_scope=?, source_project_label=? WHERE rowid=?",
+                (source_project_id, source_project_scope, source_project_label, row["rowid"]),
+            )
+            current = conn.execute("SELECT * FROM conversations WHERE rowid=?", (row["rowid"],)).fetchone()
+            conn.execute("DELETE FROM conversations_fts WHERE rowid=?", (row["rowid"],))
+            conn.execute(
+                "INSERT INTO conversations_fts(rowid,title,text_content,tags,project,model,metadata) VALUES (?,?,?,?,?,?,?)",
+                (
+                    row["rowid"],
+                    current["custom_title"] or current["title"] or "",
+                    current["text_content"] or "",
+                    " ".join(json.loads(current["tags_json"] or "[]")),
+                    current["project"] or current["source_project_label"] or "",
+                    current["model"] or "",
+                    current["metadata_json"] or "",
+                ),
+            )
+            updated += 1
+        return updated
+    finally:
+        if close_conn:
+            conn.commit()
+            conn.close()
 
 
 def default_config() -> dict[str, Any]:
@@ -210,6 +280,7 @@ def default_config() -> dict[str, Any]:
         "copy_imports_to_library": False,
         "managed_library_path": str(INSTANCE_DIR / "library"),
         "page_size": 100,
+        "project_aliases": {},
     }
 
 
@@ -231,6 +302,23 @@ def load_config() -> dict[str, Any]:
 def save_config(cfg: dict[str, Any]) -> None:
     ensure_dirs()
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+
+def project_aliases() -> dict[str, str]:
+    aliases = load_config().get("project_aliases") or {}
+    return {str(k): str(v).strip() for k, v in aliases.items() if str(v).strip()}
+
+
+def project_label(project_id: str | None, aliases: dict[str, str] | None = None) -> str | None:
+    if not project_id:
+        return None
+    aliases = aliases if aliases is not None else project_aliases()
+    if aliases.get(project_id):
+        return aliases[project_id]
+    short = project_id
+    if len(project_id) > 18:
+        short = f"{project_id[:10]}...{project_id[-6:]}"
+    return f"ChatGPT Project {short}"
 
 
 def hash_password(password: str, salt: str | None = None, iterations: int = 310_000) -> tuple[str, str, int]:
@@ -408,6 +496,9 @@ def flatten_conversation(conv: dict[str, Any]) -> dict[str, Any]:
         "content_types": sorted(content_types),
         "metadata_keys": sorted(metadata_keys),
     }
+    memory_scope = str(conv.get("memory_scope") or "")
+    template_id = conv.get("conversation_template_id")
+    source_project_id = str(template_id) if template_id and "project" in memory_scope else None
     return {
         "id": str(conv.get("conversation_id") or conv.get("id") or secrets.token_hex(16)),
         "title": conv.get("title") or "Untitled",
@@ -417,6 +508,9 @@ def flatten_conversation(conv: dict[str, Any]) -> dict[str, Any]:
         "updated_at": from_ts(conv.get("update_time")),
         "model": model,
         "mode": detect_mode(conv, messages),
+        "source_project_id": source_project_id,
+        "source_project_scope": memory_scope if source_project_id else None,
+        "source_project_label": project_label(source_project_id),
         "message_count": len(messages),
         "user_message_count": role_counts["user"],
         "assistant_message_count": role_counts["assistant"],
@@ -454,6 +548,7 @@ def upsert_conversation(conn: sqlite3.Connection, conv: dict[str, Any], source_t
             """
             UPDATE conversations SET
               title=?, created_ts=?, updated_ts=?, created_at=?, updated_at=?, model=?, mode=?,
+              source_project_id=?, source_project_scope=?, source_project_label=?,
               source_type=?, original_path=?, original_inner_path=?, import_id=?,
               message_count=?, user_message_count=?, assistant_message_count=?, system_message_count=?, tool_message_count=?,
               code_block_count=?, url_count=?, attachment_count=?, has_code=?, has_attachments=?,
@@ -470,6 +565,9 @@ def upsert_conversation(conn: sqlite3.Connection, conv: dict[str, Any], source_t
                 flat["updated_at"],
                 flat["model"],
                 flat["mode"],
+                flat["source_project_id"],
+                flat["source_project_scope"],
+                flat["source_project_label"],
                 source_type,
                 source_path,
                 inner_path,
@@ -505,11 +603,11 @@ def upsert_conversation(conn: sqlite3.Connection, conv: dict[str, Any], source_t
         cur = conn.execute(
             """
             INSERT INTO conversations (
-              id,title,created_ts,updated_ts,created_at,updated_at,model,mode,source_type,original_path,original_inner_path,import_id,
+              id,title,created_ts,updated_ts,created_at,updated_at,model,mode,source_project_id,source_project_scope,source_project_label,source_type,original_path,original_inner_path,import_id,
               message_count,user_message_count,assistant_message_count,system_message_count,tool_message_count,
               code_block_count,url_count,attachment_count,has_code,has_attachments,is_archived,is_starred,is_read_only,is_study_mode,
               raw_json,text_content,metadata_json,last_indexed_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 flat["id"],
@@ -520,6 +618,9 @@ def upsert_conversation(conn: sqlite3.Connection, conv: dict[str, Any], source_t
                 flat["updated_at"],
                 flat["model"],
                 flat["mode"],
+                flat["source_project_id"],
+                flat["source_project_scope"],
+                flat["source_project_label"],
                 source_type,
                 source_path,
                 inner_path,
@@ -554,7 +655,7 @@ def upsert_conversation(conn: sqlite3.Connection, conv: dict[str, Any], source_t
             row["custom_title"] or row["title"] or "",
             row["text_content"] or "",
             " ".join(json.loads(row["tags_json"] or "[]")),
-            row["project"] or "",
+            row["project"] or row["source_project_label"] or "",
             row["model"] or "",
             row["metadata_json"] or "",
         ),
@@ -832,13 +933,23 @@ def build_where(params: dict[str, list[str]], args: list[Any]) -> tuple[str, str
     filters = {
         "model": "model",
         "mode": "mode",
-        "project": "project",
     }
     for key, col in filters.items():
         val = (params.get(key) or [""])[0].strip()
         if val:
             where.append(f"{col} = ?")
             args.append(val)
+    project = (params.get("project") or [""])[0].strip()
+    if project:
+        project_ids = [pid for pid, alias in project_aliases().items() if alias.lower() == project.lower()]
+        where.append(
+            "("
+            "project = ? OR source_project_id = ? OR source_project_label = ?"
+            + (" OR source_project_id IN (" + ",".join("?" for _ in project_ids) + ")" if project_ids else "")
+            + ")"
+        )
+        args.extend([project, project, project])
+        args.extend(project_ids)
     tag = (params.get("tag") or [""])[0].strip().lower()
     if tag:
         where.append("tags_flat LIKE ?")
@@ -880,7 +991,7 @@ def query_conversations(params: dict[str, list[str]], include_raw: bool = False)
     order_by = order_map.get(sort, order_map["updated_desc"])
     limit = min(500, max(1, int((params.get("limit") or ["100"])[0])))
     offset = max(0, int((params.get("offset") or ["0"])[0]))
-    cols = "*" if include_raw else "rowid,id,title,custom_title,created_at,updated_at,created_ts,updated_ts,model,mode,source_type,original_path,original_inner_path,import_id,message_count,user_message_count,assistant_message_count,code_block_count,url_count,attachment_count,has_code,has_attachments,is_archived,is_starred,is_read_only,is_study_mode,rating,project,tags_json,metadata_json"
+    cols = "*" if include_raw else "rowid,id,title,custom_title,created_at,updated_at,created_ts,updated_ts,model,mode,source_type,source_project_id,source_project_scope,source_project_label,original_path,original_inner_path,import_id,message_count,user_message_count,assistant_message_count,code_block_count,url_count,attachment_count,has_code,has_attachments,is_archived,is_starred,is_read_only,is_study_mode,rating,project,tags_json,metadata_json"
     try:
         with db() as conn:
             total = conn.execute(f"SELECT COUNT(*) FROM conversations WHERE {where}", args).fetchone()[0]
@@ -909,6 +1020,9 @@ def row_to_dict(row: sqlite3.Row, include_raw: bool = False) -> dict[str, Any]:
     item["display_title"] = item.get("custom_title") or item.get("title") or "Untitled"
     item["tags"] = json.loads(item.get("tags_json") or "[]")
     item["metadata"] = json.loads(item.get("metadata_json") or "{}")
+    if item.get("source_project_id"):
+        item["source_project_label"] = project_label(item.get("source_project_id"))
+    item["display_project"] = item.get("project") or item.get("source_project_label") or ""
     if not include_raw:
         item.pop("tags_json", None)
         item.pop("metadata_json", None)
@@ -926,7 +1040,8 @@ def markdown_for_row(row: dict[str, Any]) -> str:
         f"- Updated: {row.get('updated_at') or ''}",
         f"- Model: {row.get('model') or ''}",
         f"- Mode: {row.get('mode') or ''}",
-        f"- Project: {row.get('project') or ''}",
+        f"- Project: {row.get('display_project') or row.get('project') or ''}",
+        f"- Source project ID: {row.get('source_project_id') or ''}",
         f"- Rating: {row.get('rating') or 0}",
         f"- Tags: {', '.join(tags)}",
         f"- Original: {row.get('original_path') or ''} :: {row.get('original_inner_path') or ''}",
@@ -947,7 +1062,7 @@ def filename_for_row(row: dict[str, Any], pattern: str, index: int) -> str:
         "id": row.get("id") or "",
         "date": date,
         "title": row.get("display_title") or row.get("custom_title") or row.get("title") or "Untitled",
-        "project": row.get("project") or "",
+        "project": row.get("display_project") or row.get("project") or "",
         "model": row.get("model") or "",
         "mode": row.get("mode") or "",
         "tag0": tags[0] if tags else "",
@@ -994,7 +1109,7 @@ def export_payload(payload: dict[str, Any]) -> tuple[bytes, str, str]:
                 row.get("updated_at"),
                 row.get("model"),
                 row.get("mode"),
-                row.get("project"),
+                row.get("display_project") or row.get("project"),
                 row.get("rating"),
                 ", ".join(row.get("tags") or []),
                 row.get("message_count"),
@@ -1018,7 +1133,7 @@ def export_payload(payload: dict[str, Any]) -> tuple[bytes, str, str]:
                 zf.writestr(f"json/{base}.json", json.dumps(json.loads(row["raw_json"]), ensure_ascii=False, indent=2))
             if fmt in {"zip_markdown", "bundle"}:
                 zf.writestr(f"markdown/{base}.md", markdown_for_row(row))
-            writer.writerow([row.get("id"), row.get("display_title"), row.get("created_at"), row.get("updated_at"), row.get("model"), row.get("mode"), row.get("project"), row.get("rating"), ", ".join(row.get("tags") or [])])
+            writer.writerow([row.get("id"), row.get("display_title"), row.get("created_at"), row.get("updated_at"), row.get("model"), row.get("mode"), row.get("display_project") or row.get("project"), row.get("rating"), ", ".join(row.get("tags") or [])])
         zf.writestr("metadata.csv", csv_out.getvalue())
     return mem.getvalue(), "chatstash-bundle.zip", "application/zip"
 
@@ -1108,10 +1223,26 @@ class ChatStashHandler(BaseHTTPRequestHandler):
                     "message_count": conn.execute("SELECT COALESCE(SUM(message_count),0) FROM conversations").fetchone()[0],
                     "attachment_count": conn.execute("SELECT COALESCE(SUM(attachment_count),0) FROM conversations").fetchone()[0],
                     "models": [dict(r) for r in conn.execute("SELECT model, COUNT(*) count FROM conversations WHERE model != '' GROUP BY model ORDER BY count DESC LIMIT 20")],
-                    "projects": [dict(r) for r in conn.execute("SELECT project, COUNT(*) count FROM conversations WHERE project IS NOT NULL AND project != '' GROUP BY project ORDER BY count DESC LIMIT 20")],
+                    "projects": [dict(r) for r in conn.execute("SELECT COALESCE(NULLIF(project,''), source_project_label) project, COUNT(*) count FROM conversations WHERE COALESCE(NULLIF(project,''), source_project_label) IS NOT NULL AND COALESCE(NULLIF(project,''), source_project_label) != '' GROUP BY COALESCE(NULLIF(project,''), source_project_label) ORDER BY count DESC LIMIT 20")],
                     "modes": [dict(r) for r in conn.execute("SELECT mode, COUNT(*) count FROM conversations GROUP BY mode ORDER BY count DESC")],
                 }
             json_response(self, stats)
+        elif path == "/api/source-projects":
+            with db() as conn:
+                rows = [
+                    dict(r)
+                    for r in conn.execute(
+                        """
+                        SELECT source_project_id id, source_project_scope scope, source_project_label label,
+                               COUNT(*) count, MIN(created_at) first_seen, MAX(updated_at) last_seen
+                        FROM conversations
+                        WHERE source_project_id IS NOT NULL AND source_project_id != ''
+                        GROUP BY source_project_id, source_project_scope, source_project_label
+                        ORDER BY count DESC, label COLLATE NOCASE
+                        """
+                    )
+                ]
+            json_response(self, {"items": rows})
         elif path == "/api/jobs":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM jobs ORDER BY started_at DESC LIMIT 30")]
@@ -1198,7 +1329,15 @@ class ChatStashHandler(BaseHTTPRequestHandler):
             for key in ["host", "port", "library_paths", "watch_enabled", "watch_interval_seconds", "copy_imports_to_library", "managed_library_path", "page_size"]:
                 if key in payload:
                     cfg[key] = payload[key]
+            if "project_aliases" in payload and isinstance(payload["project_aliases"], dict):
+                cfg["project_aliases"] = {
+                    str(k): str(v).strip()
+                    for k, v in payload["project_aliases"].items()
+                    if str(k).strip() and str(v).strip()
+                }
             save_config(cfg)
+            with WRITE_LOCK, db() as conn:
+                refresh_source_project_labels(conn)
             json_response(self, cfg)
         elif path == "/api/scan":
             paths = payload.get("paths") or load_config().get("library_paths") or [str(ROOT)]

@@ -30,13 +30,14 @@ The default library path is the project folder. The app can scan manually or pol
 - Raw conversation JSON
 - Normalized text content
 - Native timestamps, model, archive/star/read-only/study flags
+- Imported ChatGPT project bucket IDs when the export marks a conversation as project-scoped
 - Derived mode, message counts, code block count, URL count, attachment count
 
 App-side curation metadata is separate:
 
 - Custom title
 - Tags
-- Project
+- Project, with optional aliases for imported ChatGPT project buckets
 - Rating
 - Custom fields
 

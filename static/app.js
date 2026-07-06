@@ -123,7 +123,7 @@ function renderRows() {
         <td>${escapeHtml(date)}</td>
         <td>${escapeHtml(row.model || "")}</td>
         <td>${escapeHtml(row.mode || "")}</td>
-        <td>${escapeHtml(row.project || "")}</td>
+        <td>${escapeHtml(row.display_project || row.project || "")}</td>
         <td><div class="pill-list">${tags}</div></td>
         <td><span class="stars">${row.rating || 0}/5</span></td>
         <td>${row.message_count} msg / ${row.code_block_count} code / ${row.attachment_count} files</td>
@@ -154,7 +154,8 @@ async function openDetail(id) {
       <div><b>Updated</b>${escapeHtml(item.updated_at || "")}</div>
       <div><b>Model</b>${escapeHtml(item.model || "")}</div>
       <div><b>Mode</b>${escapeHtml(item.mode || "")}</div>
-      <div><b>Project</b>${escapeHtml(item.project || "")}</div>
+      <div><b>Project</b>${escapeHtml(item.display_project || item.project || "")}</div>
+      <div><b>Source Project</b>${escapeHtml(item.source_project_id || "")}</div>
       <div><b>Rating</b>${item.rating || 0}/5</div>
       <div><b>Messages</b>${item.message_count}</div>
       <div><b>Files</b>${item.attachment_count}</div>
@@ -204,15 +205,29 @@ async function exportSelected() {
 }
 
 async function loadSettings() {
-  const cfg = await api("/api/config");
+  const [cfg, sourceProjects] = await Promise.all([api("/api/config"), api("/api/source-projects")]);
   $("library-paths").value = (cfg.library_paths || []).join("\n");
   $("watch-enabled").checked = !!cfg.watch_enabled;
   $("watch-interval").value = cfg.watch_interval_seconds || 60;
   $("managed-library-path").value = cfg.managed_library_path || "";
   $("copy-imports").checked = !!cfg.copy_imports_to_library;
+  const aliases = cfg.project_aliases || {};
+  $("source-projects").innerHTML = (sourceProjects.items || []).map((project) => `
+    <label class="source-project-row">
+      <span>
+        <strong>${escapeHtml(project.label || project.id)}</strong>
+        <small>${escapeHtml(project.id)} / ${project.count} conversations</small>
+      </span>
+      <input data-project-alias="${escapeHtml(project.id)}" value="${escapeHtml(aliases[project.id] || project.label || "")}" />
+    </label>
+  `).join("") || `<div class="subline">No ChatGPT project buckets found in indexed exports.</div>`;
 }
 
 async function saveSettings() {
+  const projectAliases = {};
+  for (const input of document.querySelectorAll("[data-project-alias]")) {
+    if (input.value.trim()) projectAliases[input.dataset.projectAlias] = input.value.trim();
+  }
   await api("/api/config", {
     method: "POST",
     body: JSON.stringify({
@@ -221,9 +236,11 @@ async function saveSettings() {
       watch_interval_seconds: Number($("watch-interval").value || 60),
       managed_library_path: $("managed-library-path").value.trim(),
       copy_imports_to_library: $("copy-imports").checked,
+      project_aliases: projectAliases,
     }),
   });
   flash("Settings saved");
+  await refreshAll();
 }
 
 function clearFilters() {

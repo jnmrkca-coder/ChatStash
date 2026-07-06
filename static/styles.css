@@ -444,6 +444,53 @@ dialog::backdrop {
   justify-content: space-between;
 }
 
+.settings-section {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.settings-section h3 {
+  font-size: 13px;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.source-projects {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.source-project-row {
+  align-items: center;
+  background: #161815;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(170px, 1fr) minmax(180px, 1fr);
+  padding: 8px;
+}
+
+.source-project-row span {
+  display: grid;
+  gap: 3px;
+}
+
+.source-project-row strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.source-project-row small {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1180px) {
   .app-view {
     min-width: 0;
