@@ -985,7 +985,18 @@ def query_conversations(params: dict[str, list[str]], include_raw: bool = False)
         "created_asc": "created_ts ASC NULLS LAST",
         "title_asc": "COALESCE(custom_title,title) COLLATE NOCASE ASC",
         "title_desc": "COALESCE(custom_title,title) COLLATE NOCASE DESC",
+        "model_asc": "model COLLATE NOCASE ASC, updated_ts DESC",
+        "model_desc": "model COLLATE NOCASE DESC, updated_ts DESC",
+        "mode_asc": "mode COLLATE NOCASE ASC, updated_ts DESC",
+        "mode_desc": "mode COLLATE NOCASE DESC, updated_ts DESC",
+        "project_asc": "COALESCE(NULLIF(project,''), source_project_label, '') COLLATE NOCASE ASC, updated_ts DESC",
+        "project_desc": "COALESCE(NULLIF(project,''), source_project_label, '') COLLATE NOCASE DESC, updated_ts DESC",
+        "tags_asc": "tags_flat COLLATE NOCASE ASC, updated_ts DESC",
+        "tags_desc": "tags_flat COLLATE NOCASE DESC, updated_ts DESC",
+        "rating_asc": "rating ASC, updated_ts DESC",
         "rating_desc": "rating DESC, updated_ts DESC",
+        "stats_asc": "message_count ASC, code_block_count ASC, attachment_count ASC",
+        "stats_desc": "message_count DESC, code_block_count DESC, attachment_count DESC",
         "messages_desc": "message_count DESC",
     }
     order_by = order_map.get(sort, order_map["updated_desc"])
@@ -1013,6 +1024,46 @@ def query_conversations(params: dict[str, list[str]], include_raw: bool = False)
             ).fetchall()
     items = [row_to_dict(row, include_raw=include_raw) for row in rows]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+def facet_values() -> dict[str, list[dict[str, Any]]]:
+    with db() as conn:
+        models = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT model value, COUNT(*) count
+                FROM conversations
+                WHERE model IS NOT NULL AND model != ''
+                GROUP BY model
+                ORDER BY count DESC, model COLLATE NOCASE
+                LIMIT 300
+                """
+            )
+        ]
+        projects = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT COALESCE(NULLIF(project,''), source_project_label) value, COUNT(*) count
+                FROM conversations
+                WHERE COALESCE(NULLIF(project,''), source_project_label) IS NOT NULL
+                  AND COALESCE(NULLIF(project,''), source_project_label) != ''
+                GROUP BY COALESCE(NULLIF(project,''), source_project_label)
+                ORDER BY count DESC, value COLLATE NOCASE
+                LIMIT 300
+                """
+            )
+        ]
+        tag_counts: dict[str, int] = {}
+        for row in conn.execute("SELECT tags_json FROM conversations WHERE tags_json IS NOT NULL AND tags_json != '[]'"):
+            for tag in json.loads(row["tags_json"] or "[]"):
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    tags = [
+        {"value": tag, "count": count}
+        for tag, count in sorted(tag_counts.items(), key=lambda item: (-item[1], item[0].lower()))[:300]
+    ]
+    return {"models": models, "projects": projects, "tags": tags}
 
 
 def row_to_dict(row: sqlite3.Row, include_raw: bool = False) -> dict[str, Any]:
@@ -1227,6 +1278,8 @@ class ChatStashHandler(BaseHTTPRequestHandler):
                     "modes": [dict(r) for r in conn.execute("SELECT mode, COUNT(*) count FROM conversations GROUP BY mode ORDER BY count DESC")],
                 }
             json_response(self, stats)
+        elif path == "/api/facets":
+            json_response(self, facet_values())
         elif path == "/api/source-projects":
             with db() as conn:
                 rows = [

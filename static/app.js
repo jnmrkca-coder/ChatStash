@@ -83,6 +83,7 @@ async function loadConversations() {
   state.limit = data.limit;
   state.offset = data.offset;
   renderRows();
+  renderSortHeaders();
 }
 
 async function loadStats() {
@@ -97,6 +98,29 @@ async function loadStats() {
     <dt>Projects</dt><dd>${projects}</dd>
     <dt>Modes</dt><dd>${data.modes.map((m) => `${escapeHtml(m.mode || "unknown")} ${m.count}`).join(", ")}</dd>
   `;
+}
+
+function renderFacetOptions(selectId, values, anyLabel) {
+  const select = $(selectId);
+  const current = select.value;
+  const options = [`<option value="">${escapeHtml(anyLabel)}</option>`];
+  let hasCurrent = !current;
+  for (const item of values || []) {
+    const value = item.value || "";
+    if (!value) continue;
+    if (value === current) hasCurrent = true;
+    options.push(`<option value="${escapeHtml(value)}">${escapeHtml(value)} (${item.count})</option>`);
+  }
+  if (!hasCurrent) options.push(`<option value="${escapeHtml(current)}">${escapeHtml(current)}</option>`);
+  select.innerHTML = options.join("");
+  select.value = current;
+}
+
+async function loadFacets() {
+  const data = await api("/api/facets");
+  renderFacetOptions("model", data.models, "Any model");
+  renderFacetOptions("project", data.projects, "Any project");
+  renderFacetOptions("tag", data.tags, "Any tag");
 }
 
 async function loadJobs() {
@@ -138,6 +162,43 @@ function renderRows() {
   $("selection-count").textContent = `${state.selected.size.toLocaleString()} selected`;
   $("bulk-count").textContent = state.selected.size.toLocaleString();
   $("select-page").checked = state.rows.length > 0 && state.rows.every((r) => state.selected.has(r.id));
+}
+
+function sortBase(sortValue) {
+  return (sortValue || "").replace(/_(asc|desc)$/, "");
+}
+
+function sortDirection(sortValue) {
+  return sortValue.endsWith("_asc") ? "asc" : "desc";
+}
+
+function nextSortFor(base) {
+  const current = $("sort").value;
+  if (sortBase(current) === base) {
+    return `${base}_${sortDirection(current) === "asc" ? "desc" : "asc"}`;
+  }
+  const defaultDirections = {
+    title: "asc",
+    updated: "desc",
+    model: "asc",
+    mode: "asc",
+    project: "asc",
+    tags: "asc",
+    rating: "desc",
+    stats: "desc",
+  };
+  return `${base}_${defaultDirections[base] || "asc"}`;
+}
+
+function renderSortHeaders() {
+  const activeBase = sortBase($("sort").value);
+  const activeDirection = sortDirection($("sort").value);
+  for (const button of document.querySelectorAll("[data-sort-base]")) {
+    const active = button.dataset.sortBase === activeBase;
+    button.classList.toggle("active", active);
+    button.dataset.direction = active ? activeDirection : "";
+    button.setAttribute("aria-sort", active ? (activeDirection === "asc" ? "ascending" : "descending") : "none");
+  }
 }
 
 async function openDetail(id) {
@@ -310,8 +371,16 @@ function bindEvents() {
     loadConversations();
   });
 
-  for (const id of ["sort", "mode", "has_code", "has_attachments", "starred", "archived"]) {
+  for (const id of ["sort", "model", "mode", "project", "tag", "rating", "date_from", "date_to", "has_code", "has_attachments", "starred", "archived"]) {
     $(id).addEventListener("change", () => {
+      state.offset = 0;
+      loadConversations();
+    });
+  }
+
+  for (const button of document.querySelectorAll("[data-sort-base]")) {
+    button.addEventListener("click", () => {
+      $("sort").value = nextSortFor(button.dataset.sortBase);
       state.offset = 0;
       loadConversations();
     });
@@ -371,7 +440,7 @@ function bindEvents() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadConversations(), loadStats(), loadJobs()]);
+  await Promise.all([loadConversations(), loadStats(), loadJobs(), loadFacets()]);
 }
 
 async function bootApp() {

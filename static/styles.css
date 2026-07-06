@@ -302,6 +302,41 @@ th {
   z-index: 1;
 }
 
+.sort-header {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 5px;
+  min-height: 22px;
+  padding: 0;
+  text-align: left;
+  width: auto;
+}
+
+.sort-header:hover,
+.sort-header.active {
+  color: var(--text);
+}
+
+.sort-header::after {
+  color: var(--accent);
+  content: "";
+  font-size: 10px;
+  width: 8px;
+}
+
+.sort-header.active[data-direction="asc"]::after {
+  content: "^";
+}
+
+.sort-header.active[data-direction="desc"]::after {
+  content: "v";
+}
+
 tbody tr {
   cursor: pointer;
 }

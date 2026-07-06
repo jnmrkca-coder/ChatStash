@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ChatStash</title>
-    <link rel="stylesheet" href="/styles.css?v=project-aliases" />
+    <link rel="stylesheet" href="/styles.css?v=facets-sort" />
   </head>
   <body>
     <main id="auth-view" class="auth-view hidden">
@@ -48,13 +48,25 @@
               <option value="created_asc">Created oldest</option>
               <option value="title_asc">Title A-Z</option>
               <option value="title_desc">Title Z-A</option>
-              <option value="rating_desc">Rating</option>
-              <option value="messages_desc">Messages</option>
+              <option value="model_asc">Model A-Z</option>
+              <option value="model_desc">Model Z-A</option>
+              <option value="mode_asc">Mode A-Z</option>
+              <option value="mode_desc">Mode Z-A</option>
+              <option value="project_asc">Project A-Z</option>
+              <option value="project_desc">Project Z-A</option>
+              <option value="tags_asc">Tags A-Z</option>
+              <option value="tags_desc">Tags Z-A</option>
+              <option value="rating_desc">Rating high</option>
+              <option value="rating_asc">Rating low</option>
+              <option value="stats_desc">Stats high</option>
+              <option value="stats_asc">Stats low</option>
             </select>
           </div>
           <div class="filter-row">
             <label>Model</label>
-            <input id="model" placeholder="gpt-4o" />
+            <select id="model">
+              <option value="">Any model</option>
+            </select>
           </div>
           <div class="filter-row">
             <label>Mode</label>
@@ -68,11 +80,15 @@
           </div>
           <div class="filter-row">
             <label>Project</label>
-            <input id="project" placeholder="project name" />
+            <select id="project">
+              <option value="">Any project</option>
+            </select>
           </div>
           <div class="filter-row">
             <label>Tag</label>
-            <input id="tag" placeholder="tag" />
+            <select id="tag">
+              <option value="">Any tag</option>
+            </select>
           </div>
           <div class="split">
             <label><input id="has_code" type="checkbox" /> Code</label>
@@ -120,14 +136,14 @@
               <thead>
                 <tr>
                   <th></th>
-                  <th>Title</th>
-                  <th>Updated</th>
-                  <th>Model</th>
-                  <th>Mode</th>
-                  <th>Project</th>
-                  <th>Tags</th>
-                  <th>Rating</th>
-                  <th>Stats</th>
+                  <th><button class="sort-header" data-sort-base="title">Title</button></th>
+                  <th><button class="sort-header" data-sort-base="updated">Updated</button></th>
+                  <th><button class="sort-header" data-sort-base="model">Model</button></th>
+                  <th><button class="sort-header" data-sort-base="mode">Mode</button></th>
+                  <th><button class="sort-header" data-sort-base="project">Project</button></th>
+                  <th><button class="sort-header" data-sort-base="tags">Tags</button></th>
+                  <th><button class="sort-header" data-sort-base="rating">Rating</button></th>
+                  <th><button class="sort-header" data-sort-base="stats">Stats</button></th>
                 </tr>
               </thead>
               <tbody id="rows"></tbody>
@@ -205,6 +221,6 @@
       </dialog>
     </main>
 
-    <script src="/app.js?v=project-aliases"></script>
+    <script src="/app.js?v=facets-sort"></script>
   </body>
 </html>
