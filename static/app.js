@@ -87,10 +87,14 @@ async function loadConversations() {
 
 async function loadStats() {
   const data = await api("/api/stats");
+  const projects = (data.projects || [])
+    .map((project) => `${escapeHtml(project.project || "unknown")} ${project.count}`)
+    .join(", ") || "None detected";
   $("stats").innerHTML = `
     <dt>Conversations</dt><dd>${data.conversation_count.toLocaleString()}</dd>
     <dt>Messages</dt><dd>${data.message_count.toLocaleString()}</dd>
     <dt>Attachments</dt><dd>${data.attachment_count.toLocaleString()}</dd>
+    <dt>Projects</dt><dd>${projects}</dd>
     <dt>Modes</dt><dd>${data.modes.map((m) => `${escapeHtml(m.mode || "unknown")} ${m.count}`).join(", ")}</dd>
   `;
 }
